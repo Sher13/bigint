@@ -1,57 +1,49 @@
 #include <vector>
-#include <iostream>
 #include <algorithm>
+#include <cmath>
+#include <iostream>
+#include "so_vector.h"
+#include <functional>
 #include "big_integer.h"
 
 typedef unsigned __int128 uint128_t;
 
-int flags(big_integer const &a, big_integer const &b) {
-    // '<' = 1;  '>' = -1; '==' 0;
-    if (a.sign && !b.sign)
-        return 1;
-    if (b.sign && !a.sign)
-        return -1;
-    int ans = 0;
+static const uint64_t RADIX = 4294967296;
+static const big_integer ZERO(0);
+
+bool less_abs(big_integer const &a, big_integer const &b) {
     if (a.digits.size() < b.digits.size()) {
-        ans = 1;
-    } else if (a.digits.size() > b.digits.size()) {
-        ans = -1;
-    } else {
-        for(int i = a.digits.size() - 1; i >= 0; i--) {
-            if (a.digits[i] < b.digits[i]) {
-                ans = 1;
-                break;
-            }
-            if (a.digits[i] > b.digits[i]) {
-                ans = -1;
-                break;
-            }
+        return true;
+    }
+    if (a.digits.size() > b.digits.size()) {
+        return false;
+    }
+    for(size_t i = a.digits.size() - 1; i + 1 > 0; i--) {
+        if (a.digits[i] < b.digits[i]) {
+            return true;
+        }
+        if (a.digits[i] > b.digits[i]) {
+            return false;
         }
     }
-    if (ans == 0)
-        return ans;
-    if (a.sign && b.sign)
-        return 0 - ans;
-    return ans;
+    return false;
 }
 
 void big_integer::norm() {
-    while(this->digits.size() && this->digits[this->digits.size() - 1] == 0)
-        this->digits.pop_back();
-    if (this->digits.size() == 0)
-        this->sign = false;
-}
-
-big_integer big_integer::abs_(big_integer a) {
-    a.sign = false;
-    return a;
+    while(digits.size() > 1 && digits.back() == 0) {
+        digits.pop_back();
+    }
+    if (digits.size() == 1 && digits[0] == 0) {
+        sign = false;
+    }
 }
 
 // переводит из бита под знак в дополнение до двух
-void big_integer::bitToTwo() {
-    if (!sign)
+void big_integer::bit_to_two() {
+    if (!sign) {
         return;
-    for(size_t i = 0; i < digits.size(); i++) {
+    }
+    for(uint32_t i = 0; i < digits.size(); i++) {
         digits[i] = ~digits[i];
     }
     sign = false;
@@ -59,320 +51,375 @@ void big_integer::bitToTwo() {
 }
 
 // переводит из дополнения до двух в бит под знак
-void big_integer::twoToBit() {
-    if ((digits.back() & 2147483648) != 2147483648)
+void big_integer::two_to_bit() {
+    sign = false;
+    if ((digits.back() & RADIX / 2) != RADIX / 2) {
         return;
+    }
     (*this)--;
-    for(size_t i = 0; i < digits.size(); i++) {
+    for(uint32_t i = 0; i < digits.size(); i++) {
         digits[i] = ~digits[i];
     }
     sign = true;
 }
 
-
-std::pair<big_integer, big_integer> big_integer::div_little(big_integer a, big_integer b) {
-    unsigned int b1 = b.digits[0];
-    unsigned long long x = 0;
-    big_integer rez;
-    reverse(a.digits.begin(), a.digits.end());
-    for(size_t i = 0; i < a.digits.size() - 1; i++) {
-        x = x * radix + a.digits[i];
-        rez.digits.push_back(x / b1);
-        x %= b1;
+// a = a/b, return a % b
+uint32_t big_integer::div_little(uint32_t b) {
+    uint64_t x = 0;
+    for(size_t i = digits.size() - 1; i + 1 > 0; i--) {
+        x = x * RADIX + digits[i];
+        digits[i] = x / b;
+        x %= b;
     }
-    x = x * radix + a.digits.back();
-    if (x >= b1) {
-        rez.digits.push_back(x / b1);
-        x %= b1;
-    }
-    if (a.sign != b.sign) {
-        rez.sign = true;
-    }
-    reverse(rez.digits.begin(), rez.digits.end());
-    rez.norm();
-    unsigned int x1 = x;
-    return std::make_pair(rez, big_integer(x1));
+    norm();
+    return x;
 }
 
-std::pair<big_integer, big_integer> big_integer::div_(big_integer a, big_integer b) {
-    //  a < b
-    if (flags(a, b) == 1) {
-        big_integer q;
-        return std::make_pair(q, a);
+void big_integer::mul_little(uint32_t b) {
+    digits.push_back(0);
+    uint64_t carry = 0;
+    for(size_t i = 0; i < digits.size(); i++) {
+        uint64_t x = static_cast<uint64_t>(digits[i]) * b + carry;
+        digits[i] = x % RADIX;
+        carry = x / RADIX;
     }
-    if (b.digits.size() == 1) {
-        return div_little(a, b); // I'm write it later....
-    }
-    a.digits.push_back(0);
-    reverse(a.digits.begin(), a.digits.end());
-    reverse(b.digits.begin(), b.digits.end());
-    int f = radix / (a.digits[0] + 1);
-    a *= f;
-    b *= f;
-    big_integer rez;
-    bool fl = true;
-    while(a.digits.size() >= b.digits.size()) {
-        uint128_t a3 = a.digits[0] * radix * radix + a.digits[1] * radix + a.digits[2];
-        uint128_t b2 = b.digits[0] * radix + b.digits[1];
-        unsigned int d = a3 / b2;
-        unsigned int d1 = std::min(d, UINT32_MAX);
-        big_integer c = b * d1;
-        if (flags(a, c) == 1) {
-            d1--;
-            c -= b;
-        }
-        if (d1 == 0)
-            fl = false;
-        rez.digits.push_back(d1);
-        a -= c;
-        if (fl) {
-            a.digits.insert(a.digits.begin(), 0);
-        }
-    }
-    if (a.sign != b.sign) {
-        rez.sign = true;
-    }
-    reverse(rez.digits.begin(), rez.digits.end());
-    rez.norm();
-    big_integer x = rez * b;
-    x = a - x;
-    x = div_little(x, f).first;
-    return std::make_pair(rez, x);
+    norm();
 }
 
-big_integer::big_integer() {
+uint128_t big_integer::get_prefix(big_integer const &a, size_t n) {
+    uint128_t x = 0;
+    for(size_t i = 0; i < n; i++) {
+        x += a.digits[a.digits.size() - i - 1];
+        x <<= 32;
+    }
+    x >>= 32;
+    return x;
+}
+
+void big_integer::abs() {
     sign = false;
-};
+}
 
-big_integer::big_integer(big_integer const &other) {
-    for(size_t i = 0; i < other.digits.size(); i++)
-        digits.push_back(other.digits[i]);
-    sign = other.sign;
-};
+// a = a % bb, return a / bb
+big_integer big_integer::div_(big_integer const &bb) {
+    if (less_abs(*this, bb)) {
+        return 0;
+    }
+    if (bb.digits.size() == 1) {
+        big_integer rez((*this).div_little(bb.digits[0]));
+        rez.sign = sign;
+        sign ^= bb.sign;
+        rez.norm();
+        swap(rez);
+        return rez;
+    }
+    big_integer b(bb);
+    bool a_sign = sign;
+    abs();
+    b.abs();
+
+    uint32_t f = RADIX / (b.digits.back() + 1);
+    mul_little(f);
+    b.mul_little(f);
+
+    digits.push_back(0);
+    uint128_t b2 = get_prefix(b, 2);
+    big_integer rez;
+
+    size_t prev_size = b.digits.size();
+    b.digits.insert_begin(digits.size() - prev_size - 1, 0);
+
+    big_integer c;
+    for(size_t j = 0; j <= b.digits.size() - prev_size; j++) {
+
+        uint128_t a3 = get_prefix(*this, 3);
+        uint32_t d = a3 / b2;
+        d = std::min(static_cast<uint32_t>(d), UINT32_MAX);
+
+        c.digits.resize(b.digits.size() - j);
+        for(size_t i = j; i < b.digits.size(); i++)
+            c.digits[i - j] = b.digits[i];
+
+        c.mul_little(d);
+        norm();
+        if (less_abs(*this, c)) {
+            d--;
+            c.sub_positive(b);
+        }
+        rez.digits.push_back(d);
+        (*this).sub_positive(c);
+        if (digits.size() < b.digits.size() - j) {
+            digits.insert_end(b.digits.size() - digits.size() - j, 0);
+        }
+    }
+    rez.sign = a_sign ^ bb.sign;
+    rez.digits.reverse();
+    rez.norm();
+    sign = a_sign;
+    div_little(f);
+    return rez;
+}
+
+big_integer::big_integer()
+        : sign(false) {
+    digits.push_back(0);
+}
+
+big_integer::big_integer(big_integer const &other) = default;
 
 big_integer::big_integer(int a) {
-    sign = false;
-    if (a < 0)
-        sign = true;
-    digits.push_back(abs(a));
-};
+    sign = (a < 0);
+    digits.push_back(std::abs(static_cast<int64_t>(a)));
+}
 
-big_integer::big_integer(unsigned int a) {
+big_integer::big_integer(uint32_t a) {
     sign = false;
     digits.push_back(a);
-};
+}
 
 big_integer::big_integer(const std::string &str)
-{
-    big_integer a;
-    int st = 0;
+        : big_integer() {
+    size_t st = 0;
+    bool fl = false;
     if (str[0] == '-') {
-        a.sign = true;
+        fl = true;
         st++;
     }
-    for (size_t i = st; i < str.size(); i++) {
-        a *= 10;
-        a += (str[i]-'0');
+    if (str[0] == '+') {
+        st++;
     }
-    *this = a;
+    for(size_t i = st; i < str.size(); i++) {
+        size_t j = i;
+        uint32_t x = 0;
+        uint32_t st10 = 1;
+        const uint32_t NEW_RADIX = 10;
+        while(j - i < 9 && j < str.size()) {
+            x = x * NEW_RADIX + (str[j] - '0');
+            j++;
+            st10 *= NEW_RADIX;
+        }
+        i = j - 1;
+        mul_little(st10);
+        (*this) += x;
+    }
+    sign = fl;
+    norm();
 }
 
 big_integer &big_integer::operator=(big_integer const &other) {
-    big_integer res = big_integer(other);
-    this->digits = res.digits;
-    this->sign = res.sign;
+    big_integer res(other);
+    swap(res);
+    norm();
     return *this;
-};
+}
+
+void big_integer::sub_positive(big_integer const &b) {
+    int64_t borrow = 0;
+    for(size_t i = 0; i < digits.size(); i++) {
+        int64_t b_dig;
+        (i < b.digits.size()) ? b_dig = b.digits[i] : b_dig = 0;
+        if (static_cast<int64_t>(digits[i]) >= b_dig + borrow) {
+            digits[i] = digits[i] - b_dig - borrow;
+            borrow = 0;
+        } else {
+            uint64_t x = digits[i] + RADIX - b_dig - borrow;
+            digits[i] = x;
+            borrow = 1;
+        }
+    }
+    norm();
+}
+
+void big_integer::add_positive(big_integer const &b) {
+    digits.resize(std::max(b.digits.size(), digits.size()) + 1);
+    int64_t carry = 0;
+    for(size_t i = 0; i < digits.size(); i++) {
+        int64_t b_dig;
+        (i < b.digits.size()) ? b_dig = b.digits[i] : b_dig = 0;
+        int64_t x = static_cast<int64_t>(digits[i]) + static_cast<int64_t>(b_dig) + carry;
+        digits[i] = x % RADIX;
+        carry = x / RADIX;
+    }
+    norm();
+}
 
 big_integer &big_integer::operator+=(big_integer const &rhs) {
-    this->digits.resize(std::max(this->digits.size(), rhs.digits.size()) + 1);
-    big_integer a;
-    a.digits.resize(this->digits.size());
-    big_integer b(rhs);
-    b.digits.resize(this->digits.size());
-    if (this->sign != rhs.sign) {
-        if (abs_(*this) < abs_(b)) {
-            big_integer c(*this);
-            *this = b;
-            b = c;
-        }
-        a.sign = this->sign;
-        for(size_t i = 0; i < a.digits.size() - 1; i++) {
-            if (this->digits[i] >= b.digits[i])
-                a.digits[i] += this->digits[i] - b.digits[i];
-            else {
-                long long x = radix - b.digits[i] + this->digits[i];
-                this->digits[i + 1]--;
-                a.digits[i] = x;
-            }
-        }
-        a.norm();
-        *this = a;
-        return *this;
+    if (sign != rhs.sign) {
+        (*this) -= -rhs;
     } else {
-        a.digits.resize(a.digits.size() + 1);
-        for(size_t i = 0; i < this->digits.size(); i++) {
-            long long c = (long long) this->digits[i] + (long long) b.digits[i];
-            a.digits[i] += c % radix;
-            a.digits[i + 1] = c / radix;
-        }
-        a.norm();
-        *this = a;
-        return *this;
+        add_positive(rhs);
     }
-};
+    return (*this);
+}
 
 
 big_integer &big_integer::operator-=(big_integer const &rhs) {
-    return *this += (-rhs);
-};
+    if (sign == rhs.sign) {
+        big_integer b(rhs);
+        if (less_abs(*this, b)) {
+            swap(b);
+            sign = !sign;
+        }
+        int64_t borrow = 0;
+        sub_positive(b);
+    } else {
+        (*this) += -rhs;
+    }
+    return (*this);
+}
 
 big_integer &big_integer::operator*=(big_integer const &rhs) {
-    if (rhs.digits.empty()) {
-        *this = rhs;
+    if (rhs == ZERO || *this == ZERO) {
+        *this = ZERO;
         return *this;
     }
     big_integer a;
     a.digits.resize(this->digits.size() + rhs.digits.size() + 2);
-    if (this->sign != rhs.sign) {
-        a.sign = true;
-    } else {
-        a.sign = false;
-    }
-    for(size_t i = 0; i < this->digits.size(); i++) {
+    for(size_t i = 0; i < digits.size(); i++) {
         for(size_t j = 0; j < rhs.digits.size(); j++) {
-            unsigned long long x = (unsigned long long) (this->digits[i]) * (unsigned long long) (rhs.digits[j]);
-            unsigned long long mx = radix;
-            unsigned long long z = (x % mx + (unsigned long long) a.digits[i + j]);
-            a.digits[i + j] = z % mx;
-            unsigned long long y = z / mx + x / mx;
-            a.digits[i + j + 1] += y % mx;
-            a.digits[i + j + 2] += y / mx;
+            uint64_t x = rhs.digits[j];
+            x *= digits[i];
+            uint64_t y = x % RADIX + a.digits[i + j];
+            a.digits[i + j] = y % RADIX;
+            uint64_t z = x / RADIX + y / RADIX + a.digits[i + j + 1];
+            a.digits[i + j + 1] = z % RADIX;
+            a.digits[i + j + 2] += z / RADIX;
         }
     }
+    a.sign = sign ^ rhs.sign;
     a.norm();
-    *this = a;
+    swap(a);
     return *this;
-};
+}
 
 big_integer &big_integer::operator/=(big_integer const &rhs) {
-    big_integer a(*this);
-    auto rez = div_(a, rhs);
-    *this = rez.first;
+    auto rez = (*this).div_(rhs);
+    swap(rez);
     return *this;
 }
 
 big_integer &big_integer::operator%=(big_integer const &rhs) {
-    big_integer a(*this);
-    auto rez = div_(a, rhs);
-    *this = rez.second;
+    div_(rhs);
+    return *this;
+}
+
+big_integer &big_integer::bitwise(big_integer const &rhs, const std::function<uint32_t(uint32_t, uint32_t)> &f) {
+    big_integer b(rhs);
+    size_t mx = std::max(digits.size(), b.digits.size()) + 1;
+    digits.resize(mx);
+    b.digits.resize(mx);
+    bit_to_two();
+    b.bit_to_two();
+    for(size_t i = 0; i < mx; i++) {
+        digits[i] = f(digits[i], b.digits[i]);
+    }
+    two_to_bit();
+    norm();
     return *this;
 }
 
 big_integer &big_integer::operator&=(big_integer const &rhs) {
-    big_integer a(*this);
-    big_integer b(rhs);
-    b.bitToTwo();
-    a.bitToTwo();
-    big_integer c;
-    c.digits.resize(std::min(a.digits.size(), b.digits.size()));
-    for(size_t i = 0; i < c.digits.size(); i++) {
-        c.digits[i] = a.digits[i] & b.digits[i];
-    }
-    c.twoToBit();
-    *this = c;
-    return *this;
+    return bitwise(rhs, [](uint32_t a, uint32_t b) { return a & b; });
 }
 
 big_integer &big_integer::operator|=(big_integer const &rhs) {
-    big_integer a(*this);
-    a = ~a;
-    a &= ~rhs;
-    *this = ~a;
-    return *this;
+    return bitwise(rhs, [](uint32_t a, uint32_t b) { return a | b; });
 }
 
 big_integer &big_integer::operator^=(big_integer const &rhs) {
-    big_integer a(*this);
-    a = ~a;
-    a &= rhs;
-    big_integer b(*this);
-    b &= ~rhs;
-    a |= b;
-    *this = a;
-    return *this;
+    return bitwise(rhs, [](uint32_t a, uint32_t b) { return a ^ b; });
 }
 
 // mul
 big_integer &big_integer::operator<<=(int rhs) {
-    int kl = rhs / 32;
-    rhs %= 32;
-    digits.insert(digits.begin(), kl, 0);
-    unsigned int e = 1;
+    const int POW2 = 32;
+    int kl = rhs / POW2;
+    rhs %= POW2;
+    digits.insert_begin(kl, 0);
+    uint32_t e = 1;
     e <<= rhs;
     return *this *= e;
 }
 
 // div
 big_integer &big_integer::operator>>=(int rhs) {
-    int kl = rhs / 32;
-    rhs %= 32;
-    digits.erase(digits.begin(), digits.begin() + kl);
-    unsigned int e = 1;
+    const int POW2 = 32;
+    int kl = rhs / POW2;
+    rhs %= POW2;
+    digits.erase_begin(kl);
+    uint32_t e = 1;
     e <<= rhs;
-    return *this /= e;
+    (*this) /= e;
+    if (sign && (*this) % e != ZERO) {
+        (*this)--;
+    }
+    return *this;
 }
 
 big_integer big_integer::operator+() const {
     return *this;
-};
+}
 
 big_integer big_integer::operator-() const {
     big_integer a(*this);
     a.sign = !a.sign;
     a.norm();
     return a;
-};
+}
 
 big_integer big_integer::operator~() const {
-    big_integer a(*this);
-    a.bitToTwo();
-    for(size_t i = 0; i < a.digits.size(); i++) {
-        a.digits[i] = ~a.digits[i];
-    }
-    a.twoToBit();
-    return a;
+    return -(*this) - 1;
 }
 
 big_integer &big_integer::operator++() {
     return *this += 1;
-};
+}
 
 big_integer big_integer::operator++(int) {
-    return *this += 1;
-};
+    big_integer a(*this);
+    *this += 1;
+    return a;
+}
 
 big_integer &big_integer::operator--() {
     return *this -= 1;
-};
+}
 
 big_integer big_integer::operator--(int) {
-    return *this -= 1;
-};
+    big_integer a(*this);
+    *this -= 1;
+    return a;
+}
 
-std::string to_string(big_integer const& a) {
+std::string to_string(big_integer const &a) {
+    if (a == ZERO) {
+        return "0";
+    }
     std::string s;
     big_integer b(a);
-    while(b.digits.size() != 0) {
-        big_integer x = b % 10;
-        s += (char) (x.digits[0]+'0');
-        b /= 10;
+    b.abs();
+    const uint32_t ST10_9 = 1000000000;
+    while(b != ZERO) {
+        uint32_t rem = b.div_little(ST10_9);
+        std::string y = std::to_string(rem);
+        reverse(y.begin(), y.end());
+        y.insert(y.end(), 9 - y.size(), '0');
+        s += y;
     }
-    while(s.back() == '0') {
-        s.erase(s.end()-1);
+    while(s.size() != 1 && s.back() == '0') {
+        s.pop_back();
     }
     reverse(s.begin(), s.end());
+    if (a.sign) {
+        s = '-' + s;
+    }
     return s;
+}
+
+void big_integer::swap(big_integer &b) {
+    using std::swap;
+    swap(sign, b.sign);
+    digits.swap(b.digits);
 }
 
 big_integer operator+(big_integer a, big_integer const &b) {
@@ -415,14 +462,47 @@ big_integer operator>>(big_integer a, int b) {
     return a >>= b;
 }
 
+int flags(big_integer const &a, big_integer const &b) {
+    // '<' = 1;  '>' = -1; '==' 0;
+    if (a.sign && !b.sign) {
+        return 1;
+    }
+    if (b.sign && !a.sign) {
+        return -1;
+    }
+    int ans = 0;
+    if (a.digits.size() < b.digits.size()) {
+        ans = 1;
+    } else if (a.digits.size() > b.digits.size()) {
+        ans = -1;
+    } else {
+        for(size_t i = a.digits.size() - 1; i + 1 > 0; i--) {
+            if (a.digits[i] < b.digits[i]) {
+                ans = 1;
+                break;
+            }
+            if (a.digits[i] > b.digits[i]) {
+                ans = -1;
+                break;
+            }
+        }
+    }
+    if (ans == 0) {
+        return ans;
+    }
+    if (a.sign && b.sign) {
+        return -ans;
+    }
+    return ans;
+}
+
 bool operator<(big_integer const &a, big_integer const &b) {
     int f = flags(a, b);
     return (f == 1);
 }
 
 bool operator==(big_integer const &a, big_integer const &b) {
-    int f = flags(a, b);
-    return (f == 0);
+    return flags(a, b) == 0;
 }
 
 bool operator>(big_integer const &a, big_integer const &b) {
@@ -431,29 +511,19 @@ bool operator>(big_integer const &a, big_integer const &b) {
 }
 
 bool operator!=(big_integer const &a, big_integer const &b) {
-    int f = flags(a, b);
-    return !(f == 0);
-};
+    return flags(a, b) != 0;
+}
 
 bool operator<=(big_integer const &a, big_integer const &b) {
     int f = flags(a, b);
     return (f >= 0);
-};
+}
 
 bool operator>=(big_integer const &a, big_integer const &b) {
     int f = flags(a, b);
     return (f <= 0);
 }
 
-std::ostream& operator<<(std::ostream& cout_, big_integer const& a) {
-    cout_ << to_string(a);
-    return cout_;
+std::ostream &operator<<(std::ostream &cout_, big_integer const &a) {
+    return cout_ << to_string(a);
 }
-
-int main() {
-    big_integer a("123452351498340918391834");
-    a++;
-    std::cout << a;
-    return 0;
-}
-
